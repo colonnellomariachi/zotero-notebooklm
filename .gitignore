@@ -1,6 +1,11 @@
 # Credentials — never commit
 .env
 
+# PyInstaller build artifacts
+build/
+dist/
+*.spec.bak
+
 # Auto-generated state
 state.json
 state.tmp
