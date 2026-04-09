@@ -4,3 +4,4 @@ python-dotenv>=1.0.0
 pydantic>=2.0.0
 loguru>=0.7.0
 notebooklm-py>=0.1.0
+browser-cookie3>=0.19.0

@@ -4,7 +4,10 @@ from tkinter import messagebox, filedialog, scrolledtext
 import ttkbootstrap as ttk
 from pathlib import Path
 import config
-from core.google_auth import get_auth_status, import_cookies, import_cookies_from_file
+from core.google_auth import (
+    get_auth_status, import_cookies, import_cookies_from_file,
+    import_from_browser, available_browsers,
+)
 
 _ENV_PATH = Path(__file__).parent.parent / ".env"
 
@@ -16,15 +19,21 @@ _FIELDS = [
     ("ZOTERO_LINKED_FILES_BASE", "Zotero Linked Files Subfolder (optional)", False),
 ]
 
-_INSTRUCTIONS = (
-    "How to export your Google cookies:\n\n"
-    "1. Install the 'Cookie-Editor' extension in Chrome or Firefox\n"
-    "   (search 'Cookie-Editor' in your browser's extension store)\n\n"
-    "2. Go to https://notebooklm.google.com and log in with your Google account\n\n"
-    "3. Click the Cookie-Editor icon → click Export → Export as JSON\n\n"
-    "4. Paste the copied JSON below (or use 'Import from file...')\n\n"
-    "Your session is saved locally in ~/.notebooklm/storage_state.json\n"
-    "and will need to be refreshed when Google cookies expire (~1 year)."
+_INSTRUCTIONS_BROWSER = (
+    "Easiest method — no extensions needed:\n\n"
+    "1. Log into https://notebooklm.google.com in Chrome, Edge, Firefox, or Brave\n\n"
+    "2. Close the browser completely (required for Chrome/Edge/Brave;\n"
+    "   Firefox can stay open)\n\n"
+    "3. Click the 'Import from browser' button above and select your browser\n\n"
+    "Your session is saved in ~/.notebooklm/storage_state.json (~1 year validity)."
+)
+
+_INSTRUCTIONS_MANUAL = (
+    "Manual method (Cookie-Editor extension):\n\n"
+    "1. Install 'Cookie-Editor' from your browser's extension store\n\n"
+    "2. Go to https://notebooklm.google.com and log in\n\n"
+    "3. Click Cookie-Editor → Export → Export as JSON\n\n"
+    "4. Paste the JSON below or use 'Import from file...'"
 )
 
 
@@ -95,7 +104,7 @@ class SettingsDialog(tk.Toplevel):
     def _build_auth_tab(self, frame: ttk.Frame):
         # Status row
         status_frame = ttk.Frame(frame)
-        status_frame.pack(fill="x", pady=(0, 12))
+        status_frame.pack(fill="x", pady=(0, 8))
         ttk.Label(status_frame, text="Status:").pack(side="left", padx=(0, 8))
         self._auth_status_var = tk.StringVar()
         self._auth_status_label = ttk.Label(status_frame, textvariable=self._auth_status_var, font=("", 9, "bold"))
@@ -104,29 +113,56 @@ class SettingsDialog(tk.Toplevel):
                    command=self._refresh_auth_status).pack(side="right")
         self._refresh_auth_status()
 
-        ttk.Separator(frame).pack(fill="x", pady=(0, 12))
+        ttk.Separator(frame).pack(fill="x", pady=(0, 10))
 
-        # Instructions
-        ttk.Label(frame, text="Instructions:", font=("", 9, "bold")).pack(anchor="w")
-        instr = tk.Text(frame, height=11, wrap="word", font=("", 9),
-                        relief="flat", background=frame.winfo_toplevel().cget("background"))
-        instr.insert("1.0", _INSTRUCTIONS)
-        instr.configure(state="disabled")
-        instr.pack(fill="x", pady=(4, 12))
+        # ── Section 1: Import from browser ────────────────────────────────────
+        ttk.Label(frame, text="Option 1 — Import directly from browser",
+                  font=("", 9, "bold")).pack(anchor="w")
 
-        # Paste area
-        ttk.Label(frame, text="Paste cookies JSON here:").pack(anchor="w")
-        paste_frame = ttk.Frame(frame)
-        paste_frame.pack(fill="both", expand=True, pady=(4, 8))
-        self._paste_text = scrolledtext.ScrolledText(paste_frame, height=6, font=("Consolas", 8), wrap="none")
-        self._paste_text.pack(fill="both", expand=True)
+        instr1 = tk.Text(frame, height=5, wrap="word", font=("", 9),
+                         relief="flat", background=frame.winfo_toplevel().cget("background"))
+        instr1.insert("1.0", _INSTRUCTIONS_BROWSER)
+        instr1.configure(state="disabled")
+        instr1.pack(fill="x", pady=(4, 6))
 
-        # Buttons
+        browsers = available_browsers()
+        browser_btn_frame = ttk.Frame(frame)
+        browser_btn_frame.pack(fill="x", pady=(0, 10))
+
+        if browsers:
+            for name in browsers:
+                label = name.capitalize().replace("_gx", " GX").replace("_", " ")
+                ttk.Button(
+                    browser_btn_frame,
+                    text=label,
+                    bootstyle="primary-outline",
+                    command=lambda b=name: self._import_from_browser(b),
+                    width=10,
+                ).pack(side="left", padx=(0, 6))
+        else:
+            ttk.Label(browser_btn_frame, text="browser-cookie3 not installed — run: pip install browser-cookie3",
+                      foreground="gray").pack(side="left")
+
+        ttk.Separator(frame).pack(fill="x", pady=(0, 10))
+
+        # ── Section 2: Paste / file import ────────────────────────────────────
+        ttk.Label(frame, text="Option 2 — Paste JSON (Cookie-Editor extension)",
+                  font=("", 9, "bold")).pack(anchor="w")
+
+        instr2 = tk.Text(frame, height=4, wrap="word", font=("", 9),
+                         relief="flat", background=frame.winfo_toplevel().cget("background"))
+        instr2.insert("1.0", _INSTRUCTIONS_MANUAL)
+        instr2.configure(state="disabled")
+        instr2.pack(fill="x", pady=(4, 6))
+
+        self._paste_text = scrolledtext.ScrolledText(frame, height=5, font=("Consolas", 8), wrap="none")
+        self._paste_text.pack(fill="both", expand=True, pady=(0, 8))
+
         btn_frame = ttk.Frame(frame)
         btn_frame.pack(fill="x")
         ttk.Button(btn_frame, text="Import from file...", bootstyle="secondary-outline",
                    command=self._import_from_file).pack(side="left", padx=(0, 8))
-        ttk.Button(btn_frame, text="Save cookies", bootstyle="success",
+        ttk.Button(btn_frame, text="Save pasted cookies", bootstyle="success",
                    command=self._save_cookies).pack(side="left")
 
     def _refresh_auth_status(self):
@@ -151,6 +187,15 @@ class SettingsDialog(tk.Toplevel):
         if ok:
             messagebox.showinfo("Google Auth", f"Cookies saved successfully.\n{msg}", parent=self)
             self._paste_text.delete("1.0", "end")
+            self._refresh_auth_status()
+        else:
+            messagebox.showerror("Import failed", msg, parent=self)
+
+    def _import_from_browser(self, browser_name: str):
+        ok, msg = import_from_browser(browser_name)
+        if ok:
+            messagebox.showinfo("Google Auth",
+                                f"Cookies imported successfully.\n{msg}", parent=self)
             self._refresh_auth_status()
         else:
             messagebox.showerror("Import failed", msg, parent=self)

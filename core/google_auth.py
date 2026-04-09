@@ -1,9 +1,27 @@
 from __future__ import annotations
 import json
+import time
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
+
+try:
+    import browser_cookie3
+    _BC3_AVAILABLE = True
+except ImportError:
+    _BC3_AVAILABLE = False
+
+# Domains to harvest when reading from the browser
+_GOOGLE_DOMAINS = ("google.com", "notebooklm.google.com")
+
+# browser-cookie3 loader functions by name
+_BROWSER_LOADERS: dict[str, Any] = {}
+if _BC3_AVAILABLE:
+    for _name in ("chrome", "chromium", "edge", "brave", "opera", "opera_gx",
+                  "vivaldi", "arc", "firefox", "librewolf"):
+        if hasattr(browser_cookie3, _name):
+            _BROWSER_LOADERS[_name] = getattr(browser_cookie3, _name)
 
 try:
     from notebooklm.paths import get_storage_path
@@ -157,3 +175,81 @@ def import_cookies_from_file(file_path: str | Path) -> tuple[bool, str]:
     except OSError as e:
         return False, f"Cannot read file: {e}"
     return import_cookies(text)
+
+
+# ── Browser-direct import (browser-cookie3) ───────────────────────────────────
+
+def available_browsers() -> list[str]:
+    """Return list of browser names that browser-cookie3 can read."""
+    return list(_BROWSER_LOADERS.keys())
+
+
+def import_from_browser(browser_name: str) -> tuple[bool, str]:
+    """
+    Read Google cookies directly from an installed browser and save them.
+
+    The browser must be CLOSED before calling this on Chrome/Edge/Brave
+    (they lock the SQLite cookie database while running).
+    Firefox can be read while open.
+
+    Returns (success, message).
+    """
+    if not _BC3_AVAILABLE:
+        return False, "browser-cookie3 is not installed."
+
+    loader = _BROWSER_LOADERS.get(browser_name.lower())
+    if loader is None:
+        return False, f"Unknown browser: '{browser_name}'. Available: {list(_BROWSER_LOADERS)}"
+
+    try:
+        cookie_jar = loader(domain_name="google.com")
+    except Exception as e:
+        msg = str(e)
+        if "database is locked" in msg.lower() or "unable to open" in msg.lower():
+            return False, (
+                f"Cannot read {browser_name} cookies — the browser is open.\n"
+                f"Close {browser_name.capitalize()} completely and try again."
+            )
+        return False, f"Error reading {browser_name} cookies: {e}"
+
+    now = time.time()
+    cookies = []
+    for c in cookie_jar:
+        domain = c.domain if c.domain.startswith(".") else f".{c.domain}"
+        # Keep only Google-related cookies
+        if "google" not in domain:
+            continue
+        cookies.append({
+            "name": c.name,
+            "value": c.value,
+            "domain": domain,
+            "path": c.path or "/",
+            "expires": int(c.expires) if c.expires else -1,
+            "httpOnly": bool(getattr(c, "_rest", {}).get("HttpOnly")),
+            "secure": bool(c.secure),
+            "sameSite": "None",
+        })
+
+    if not cookies:
+        return False, (
+            f"No Google cookies found in {browser_name}.\n"
+            "Make sure you are logged into notebooklm.google.com in that browser."
+        )
+
+    storage_state = {"cookies": cookies, "origins": []}
+    missing = _validate(storage_state)
+    if missing:
+        return False, (
+            f"Found {len(cookies)} Google cookies in {browser_name}, "
+            f"but missing required: {', '.join(sorted(missing))}.\n"
+            "Make sure you are logged into notebooklm.google.com in that browser."
+        )
+
+    path = get_storage_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(storage_state, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+
+    logger.info(f"Google auth: imported {len(cookies)} cookies from {browser_name}")
+    return True, f"Imported {len(cookies)} cookies from {browser_name.capitalize()}."

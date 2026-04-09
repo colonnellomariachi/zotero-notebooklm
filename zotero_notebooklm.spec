@@ -54,6 +54,12 @@ hiddenimports = [
     *collect_submodules("ttkbootstrap"),
     # python-dotenv
     "dotenv",
+    # browser-cookie3 and its crypto deps
+    "browser_cookie3",
+    "Cryptodome",
+    "Cryptodome.Cipher.AES",
+    "win32crypt",
+    "wmi",
 ]
 
 # ── Analysis ───────────────────────────────────────────────────────────────────
